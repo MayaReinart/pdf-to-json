@@ -1,6 +1,8 @@
 from datetime import datetime
 from pydantic import BaseModel, field_validator
 
+import pymupdf
+
 
 SAMPLE = [
   {"text": "Invoice", "bbox": [50, 30, 150, 50]},
@@ -131,4 +133,27 @@ class Document(BaseModel):
         return v.strip()
 
 
-print(Document.from_dict(SAMPLE))
+
+def main():
+    document = pymupdf.open("rpt-scaninvoices.jpg")
+
+    words: list[Word] = []
+
+    for page in document:
+        page_text = page.get_textpage_ocr()
+
+        page_dict = page_text.extractDICT()
+        blocks = page_dict["blocks"]
+
+        for block in blocks:
+            print("EXTRACTING LINES")
+            lines = block["lines"]
+            for line in lines:
+                spans = line["spans"]
+                for span in spans:
+                    print(span["text"])
+                    words.append(Word.from_dict({"text": span["text"], "bbox": span["bbox"]}))
+
+
+if __name__ == "__main__":
+    main()
