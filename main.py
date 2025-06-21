@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 SAMPLE = [
@@ -28,6 +28,78 @@ class Word(BaseModel):
     @classmethod
     def from_dict(cls, data: dict) -> "Word":
         return Word(text=data["text"], bbox=BBox(x0=data["bbox"][0], y0=data["bbox"][1], x1=data["bbox"][2], y1=data["bbox"][3]))
+    
+    def text_lower(self) -> str:
+        return self.text.strip().lower()
+
+
+class Line(BaseModel):
+    words: list[Word]
+
+
+    @classmethod
+    def from_words(cls, words: list[Word]) -> "Line":
+        # Sort by x0 to get the correct order of words in the line
+        return cls(words=sorted(words, key=lambda x: x.bbox.x0))
+    
+
+    def parse(self) -> dict[str, str]:
+        result = {}
+
+        index = 0
+
+        # Parse the line until the last word is reached
+        # TODO: add support for multi-word keys/values
+        while index < len(self.words):
+            current_word = self.words[index].text_lower()
+            next_word = self.words[index + 1].text_lower() if index + 1 < len(self.words) else ""
+
+            if current_word.endswith(":"):
+                result[current_word[:-1]] = next_word
+                # Next word is already parsed, so we skip it
+                index += 1
+            
+            index += 1
+
+        return result
+
+
+
+class Words(BaseModel):
+    lines: list[Line]
+
+
+    @classmethod
+    def from_dict(cls, data: list[dict]) -> "Words":
+        words=[Word.from_dict(item) for item in data]
+
+        return cls.from_words(words)
+    
+
+    @classmethod
+    def from_words(cls, words: list[Word], epsilon: float = 5) -> "Words":
+        lines: list[list[Word]] = []
+
+        # Sort by y0 to get the correct order of lines
+        for word in sorted(words, key=lambda w: w.bbox.y0):
+            placed = False
+            for line in lines:
+                if abs(line[0].bbox.y0 - word.bbox.y0) < epsilon:
+                    line.append(word)
+                    placed = True
+                    break
+            if not placed:
+                lines.append([word])
+
+        return cls(lines=[Line.from_words(line) for line in lines])
+    
+
+    def parse(self) -> list[dict[str, str]]:
+        return [line.parse() for line in self.lines]
+    
+
+    def parse_flat(self) -> dict[str, str]:
+        return {k: v for line in self.lines for k, v in line.parse().items()}
 
 
 class Document(BaseModel):
@@ -37,57 +109,26 @@ class Document(BaseModel):
 
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Document":
-        if "Date" in data:
-            date = datetime.strptime(data["Date"], "%Y-%m-%d")
-        if "Total" in data:
-            total = float(data["Total"].replace("$", "").replace(",", ""))
-        if "Vendor" in data:
-            vendor = data["Vendor"]
-        return cls(date=date, total=total, vendor=vendor)
+    def from_dict(cls, data: dict[str, str]) -> "Document":
+        words = Words.from_dict(data)
 
-
-def parse_lines(data: list[dict]) -> list[list[Word]]:
-    words = [Word.from_dict(item) for item in data]
-
-    line_positions = {word.bbox.y0: word for word in words}
-    lines = []
-
-    for line_position in line_positions:
-        line_words = [word for word in words if word.bbox.y0 == line_position]
-        lines.append(line_words)
-
+        # TODO: add support for fuzzy matching
+        return cls(**words.parse_flat())
     
 
-    return lines
-
-
-def parse_line(line: list[Word]) -> dict[str, str]:
-    result = {}
-
-    index = 0
-
-    while index < len(line):
-        word = line[index]
-
-        if word.text.endswith(":"):
-            result[word.text[:-1]] = line[index + 1].text
-            index += 2
-        else:
-            index += 1
-
-    return result
-
-
-def parse_document(data: list[dict]) -> Document:
-    lines = parse_lines(data)
-
-    parsed_lines = {}
+    @field_validator("date", mode="before")
+    def validate_date(cls, v: str) -> datetime:
+        return datetime.strptime(v, "%Y-%m-%d")
     
-    for line in lines:
-        parsed_lines.update(parse_line(line))
 
-    return Document.from_dict(parsed_lines)
+    @field_validator("total", mode="before")
+    def validate_total(cls, v: str) -> float:
+        return float(v.replace("$", "").replace(",", ""))
+    
+
+    @field_validator("vendor", mode="before")
+    def validate_vendor(cls, v: str) -> str:
+        return v.strip()
 
 
-print(parse_document(SAMPLE))
+print(Document.from_dict(SAMPLE))
