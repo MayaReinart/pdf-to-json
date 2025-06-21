@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "pdf-to-json"
+version = "0.1.0"
+description = "Parse and Normalize Invoice PDFs into Structured JSON"
+authors = ["Maya Reinart <mayareinart@gmail.com>"]
+license = "GPL-3.0"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pymupdf = "^1.26.1"
+pytesseract = "^0.3.13"
+pydantic = "^2.11.7"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
