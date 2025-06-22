@@ -1,18 +1,6 @@
-from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 import pymupdf
-
-
-SAMPLE = [
-  {"text": "Invoice", "bbox": [50, 30, 150, 50]},
-  {"text": "Date:", "bbox": [50, 100, 90, 120]},
-  {"text": "2024-03-21", "bbox": [100, 100, 200, 120]},
-  {"text": "Total:", "bbox": [50, 160, 90, 180]},
-  {"text": "$1,250.00", "bbox": [100, 160, 200, 180]},
-  {"text": "Vendor:", "bbox": [300, 100, 360, 120]},
-  {"text": "Acme", "bbox": [370, 100, 410, 120]}
-]
 
 
 class BBox(BaseModel):
