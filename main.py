@@ -59,8 +59,22 @@ class Line(BaseModel):
 
 
 
+class Column(BaseModel):
+    """
+    A column is a list of lines that are close enough by their x0 coordinate to be in the same column.
+    """
+
+    words: list[Word]
+
+
+    def __str__(self) -> str:
+        return "\n".join([word.text for word in self.words])
+
+
+
 class Page(BaseModel):
     lines: list[Line]
+    columns: list[Column] = []
 
 
     @classmethod
@@ -78,6 +92,7 @@ class Page(BaseModel):
         for word in sorted(words, key=lambda w: w.bbox.y0):
             placed = False
             for line in lines:
+                # Group tokens into lines if they are close enough
                 if abs(line[0].bbox.y0 - word.bbox.y0) < epsilon:
                     line.append(word)
                     placed = True
@@ -85,8 +100,23 @@ class Page(BaseModel):
             if not placed:
                 lines.append([word])
 
-        return cls(lines=[Line.from_words(line) for line in lines])
-    
+
+        # Assign column number to words if possible, based on the X0 proximity of the words
+        # TODO: refactor to reduce duplication. 
+        columns: list[list[Word]] = []
+
+        for word in sorted(words, key=lambda w: w.bbox.x0):
+            placed = False
+            for column in columns:
+                if abs(column[0].bbox.x0 - word.bbox.x0) < epsilon:
+                    column.append(word)
+                    placed = True
+                    break
+            if not placed:
+                columns.append([word])
+
+        return cls(lines=[Line.from_words(line) for line in lines], columns=[Column(words=column) for column in columns])
+
 
     def __str__(self) -> str:
         return "\n".join([str(line) for line in self.lines])
@@ -103,6 +133,10 @@ class Document(BaseModel):
 
     def __str__(self) -> str:
         return "\nNEW PAGE\n".join([str(page) for page in self.pages])
+    
+
+    def as_columns(self) -> list[Column]:
+        return [column for page in self.pages for column in page.columns]
 
 
 
@@ -125,7 +159,8 @@ def main():
 
     document = Document(pages=pages)
 
-    print(document)
+    for column in document.as_columns():
+        print(column)
 
 
 
