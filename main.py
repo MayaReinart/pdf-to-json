@@ -14,6 +14,8 @@ class Word(BaseModel):
     text: str
     bbox: BBox
 
+    line: int | None = None
+    column: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "Word":
@@ -27,10 +29,8 @@ class Line(BaseModel):
     words: list[Word]
 
 
-    @classmethod
-    def from_words(cls, words: list[Word]) -> "Line":
-        # Sort by x0 to get the correct order of words in the line
-        return cls(words=sorted(words, key=lambda x: x.bbox.x0))
+    def __init__(self, words: list[Word]) -> None:
+        super().__init__(words=sorted(words, key=lambda x: x.bbox.x0))
     
 
     def as_key_value_pairs(self) -> dict[str, str]:
@@ -68,75 +68,105 @@ class Column(BaseModel):
 
 
     def __str__(self) -> str:
-        return "\n".join([word.text for word in self.words])
+        text = ""
+        current_line = 0
 
+        for word in self.words:
+            if word.line != current_line:
+                text += "\n"
+                current_line = word.line
+            text += word.text + " "
+
+        return text
 
 
 class Page(BaseModel):
-    lines: list[Line]
+
+    words: list[Word]
+    epsilon: float
+
+    lines: list[Line] = []
     columns: list[Column] = []
-
-
-    @classmethod
-    def from_dict(cls, data: list[dict]) -> "Page":
-        words=[Word.from_dict(item) for item in data]
-
-        return cls.from_words(words)
     
 
-    @classmethod
-    def from_words(cls, words: list[Word], epsilon: float = 5) -> "Page":
-        lines: list[list[Word]] = []
+    def __init__(self, words: list[Word], epsilon: float = 5) -> None:
+        # Call parent __init__ first to properly initialize Pydantic fields
+        super().__init__(words=words, epsilon=epsilon)
+        
+        # Sort by y0 to get the correct order of lines, then by x0 to get the correct order of words in the lines
+        self.words = sorted(words, key=lambda w: (w.bbox.y0, w.bbox.x0))
 
-        # Sort by y0 to get the correct order of lines
-        for word in sorted(words, key=lambda w: w.bbox.y0):
+        # Group words into lines
+        lines: list[list[Word]] = []
+        
+        for word in self.words:
             placed = False
-            for line in lines:
+            for line_idx, line in enumerate(lines):
                 # Group tokens into lines if they are close enough
-                if abs(line[0].bbox.y0 - word.bbox.y0) < epsilon:
+                if abs(line[0].bbox.y0 - word.bbox.y0) < self.epsilon:
                     line.append(word)
+                    word.line = line_idx
                     placed = True
                     break
             if not placed:
+                word.line = len(lines)
                 lines.append([word])
 
 
         # Assign column number to words if possible, based on the X0 proximity of the words
-        # TODO: refactor to reduce duplication. 
+        # TODO: refactor to reduce code duplication. 
         columns: list[list[Word]] = []
 
-        for word in sorted(words, key=lambda w: w.bbox.x0):
+        for word in self.words:
             placed = False
-            for column in columns:
-                if abs(column[0].bbox.x0 - word.bbox.x0) < epsilon:
+            for col_idx, column in enumerate(columns):
+                if abs(column[0].bbox.x0 - word.bbox.x0) < self.epsilon:
                     column.append(word)
+                    word.column = col_idx
                     placed = True
                     break
             if not placed:
+                word.column = len(columns)
                 columns.append([word])
 
-        return cls(lines=[Line.from_words(line) for line in lines], columns=[Column(words=column) for column in columns])
+        # Dissolve single-element columns and reassign to previous column
+        for col_idx in range(len(columns) - 1, 0, -1):  # Start from last column, skip first
+            if len(columns[col_idx]) == 1:
+                # Reassign the word to the previous column
+                word = columns[col_idx][0]
+                word.column = col_idx - 1
+                columns[col_idx - 1].append(word)
+                # Remove the single-element column
+                columns.pop(col_idx)
+
+        # Update column numbers after dissolving
+        for col_idx, column in enumerate(columns):
+            for word in column:
+                word.column = col_idx
+
+        self.lines = [Line(words=line) for line in lines]
+        self.columns = [Column(words=column) for column in columns]
 
 
     def __str__(self) -> str:
         return "\n".join([str(line) for line in self.lines])
+    
+
+    def as_columns(self) -> str:
+        return "\n------------\n".join([str(column) for column in self.columns])
+
 
 
 class Document(BaseModel):
     pages: list[Page]
 
 
-    @classmethod
-    def from_words(cls, words: list[Word]) -> "Document":
-        return cls(pages=[Page.from_words(words)])
-    
-
     def __str__(self) -> str:
         return "\nNEW PAGE\n".join([str(page) for page in self.pages])
     
 
-    def as_columns(self) -> list[Column]:
-        return [column for page in self.pages for column in page.columns]
+    def as_columns(self) -> str:
+        return "\nNEW PAGE\n".join([str(page.as_columns()) for page in self.pages])
 
 
 
@@ -155,12 +185,11 @@ def main():
         for word in page_words:
             words.append(Word(text=word[4], bbox=BBox(x0=word[0], y0=word[1], x1=word[2], y1=word[3])))
 
-        pages.append(Page.from_words(words))
+        pages.append(Page(words=words))
 
     document = Document(pages=pages)
 
-    for column in document.as_columns():
-        print(column)
+    print(document.as_columns())
 
 
 
