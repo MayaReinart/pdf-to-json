@@ -1,6 +1,12 @@
 from pydantic import BaseModel
 
 import pymupdf
+from sklearn.cluster import DBSCAN
+
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 class BBox(BaseModel):
@@ -9,10 +15,14 @@ class BBox(BaseModel):
     x1: float
     y1: float
 
+    def center(self) -> tuple[float, float]:
+        return (self.x0 + self.x1) / 2, (self.y0 + self.y1) / 2
+
 
 class Word(BaseModel):
     text: str
     bbox: BBox
+    cluster: int | None = None
 
     line: int | None = None
     column: int | None = None
@@ -102,8 +112,9 @@ class Page(BaseModel):
         for word in self.words:
             placed = False
             for line_idx, line in enumerate(lines):
-                # Group tokens into lines if they are close enough
-                if abs(line[0].bbox.y0 - word.bbox.y0) < self.epsilon:
+                # Group tokens into lines if they are close enough and in the same cluster
+                if (abs(line[0].bbox.y0 - word.bbox.y0) < self.epsilon and
+                    word.cluster == line[0].cluster):
                     line.append(word)
                     word.line = line_idx
                     placed = True
@@ -120,7 +131,9 @@ class Page(BaseModel):
         for word in self.words:
             placed = False
             for col_idx, column in enumerate(columns):
-                if abs(column[0].bbox.x0 - word.bbox.x0) < self.epsilon:
+                # Group tokens into columns if they are close enough and in the same cluster
+                if (abs(column[0].bbox.x0 - word.bbox.x0) < self.epsilon and
+                    word.cluster == column[0].cluster):
                     column.append(word)
                     word.column = col_idx
                     placed = True
@@ -156,6 +169,11 @@ class Page(BaseModel):
         return "\n------------\n".join([str(column) for column in self.columns])
 
 
+    @classmethod
+    def from_dbscan(cls, words: list[Word], epsilon: float = 5) -> "Page":
+        return cls(words=words, epsilon=epsilon)
+
+
 
 class Document(BaseModel):
     pages: list[Page]
@@ -167,6 +185,42 @@ class Document(BaseModel):
 
     def as_columns(self) -> str:
         return "\nNEW PAGE\n".join([str(page.as_columns()) for page in self.pages])
+
+
+    @classmethod
+    def from_dbscan(cls, words: list[Word], epsilon: float = 5) -> "Document":
+        coords = [w.bbox.center() for w in words]
+        clusters = DBSCAN(eps=25, min_samples=2).fit(coords)
+
+        # Print the number of clusters
+        print(f"Number of clusters: {len(set(clusters.labels_)) - (1 if -1 in clusters.labels_ else 0)}")
+        print(f"Number of words: {len(words)}")
+
+        for word, cluster in zip(words, clusters.labels_):
+            word.cluster = cluster
+
+        # Create visualization
+        plt.figure(figsize=(12, 8))
+        colors = plt.cm.Set3(np.linspace(0, 1, len(set(clusters.labels_))))
+
+        for word in words:
+            x, y = word.bbox.center()
+            cluster_id = word.cluster if word.cluster >= 0 else -1
+            color = colors[cluster_id] if cluster_id >= 0 else 'black'
+            plt.scatter(x, -y, c=[color], alpha=0.6, s=50)
+            plt.text(x, -y, word.text, fontsize=6, ha='center', va='center')
+
+        plt.title("DBSCAN Clusters")
+        plt.xlabel("X coordinate")
+        plt.ylabel("Y coordinate (inverted)")
+        plt.savefig('clusters.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        print("Cluster visualization saved as 'clusters.png'")
+
+        pages = []
+        pages.append(Page.from_dbscan(words=words, epsilon=epsilon))
+
+        return cls(pages=pages)
 
 
 
@@ -187,9 +241,9 @@ def main():
 
         pages.append(Page(words=words))
 
-    document = Document(pages=pages)
+    document = Document.from_dbscan(words=words, epsilon=5)
 
-    print(document.as_columns())
+#    print(document.as_columns())
 
 
 
