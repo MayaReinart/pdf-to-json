@@ -45,7 +45,7 @@ class Line(BaseModel):
         return cls(words=sorted(words, key=lambda x: x.bbox.x0))
     
 
-    def parse(self) -> dict[str, str]:
+    def as_key_value_pairs(self) -> dict[str, str]:
         result = {}
 
         index = 0
@@ -64,22 +64,26 @@ class Line(BaseModel):
             index += 1
 
         return result
+    
+
+    def __str__(self) -> str:
+        return " | ".join([word.text for word in self.words])
 
 
 
-class Words(BaseModel):
+class Page(BaseModel):
     lines: list[Line]
 
 
     @classmethod
-    def from_dict(cls, data: list[dict]) -> "Words":
+    def from_dict(cls, data: list[dict]) -> "Page":
         words=[Word.from_dict(item) for item in data]
 
         return cls.from_words(words)
     
 
     @classmethod
-    def from_words(cls, words: list[Word], epsilon: float = 5) -> "Words":
+    def from_words(cls, words: list[Word], epsilon: float = 5) -> "Page":
         lines: list[list[Word]] = []
 
         # Sort by y0 to get the correct order of lines
@@ -96,63 +100,45 @@ class Words(BaseModel):
         return cls(lines=[Line.from_words(line) for line in lines])
     
 
-    def parse(self) -> list[dict[str, str]]:
-        return [line.parse() for line in self.lines]
-    
-
-    def parse_flat(self) -> dict[str, str]:
-        return {k: v for line in self.lines for k, v in line.parse().items()}
+    def __str__(self) -> str:
+        return "\n".join([str(line) for line in self.lines])
 
 
 class Document(BaseModel):
-    date: datetime
-    total: float
-    vendor: str
+    pages: list[Page]
 
 
     @classmethod
-    def from_dict(cls, data: dict[str, str]) -> "Document":
-        words = Words.from_dict(data)
-
-        # TODO: add support for fuzzy matching
-        return cls(**words.parse_flat())
+    def from_words(cls, words: list[Word]) -> "Document":
+        return cls(pages=[Page.from_words(words)])
     
 
-    @field_validator("date", mode="before")
-    def validate_date(cls, v: str) -> datetime:
-        return datetime.strptime(v, "%Y-%m-%d")
-    
-
-    @field_validator("total", mode="before")
-    def validate_total(cls, v: str) -> float:
-        return float(v.replace("$", "").replace(",", ""))
-    
-
-    @field_validator("vendor", mode="before")
-    def validate_vendor(cls, v: str) -> str:
-        return v.strip()
+    def __str__(self) -> str:
+        return "\nNEW PAGE\n".join([str(page) for page in self.pages])
 
 
 
 def main():
     document = pymupdf.open("rpt-scaninvoices.jpg")
 
-    words: list[Word] = []
+    pages: list[Page] = []
 
     for page in document:
+        words: list[Word] = []
         page_text = page.get_textpage_ocr()
 
-        page_dict = page_text.extractDICT()
-        blocks = page_dict["blocks"]
+        # (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+        page_words = page_text.extractWORDS()
 
-        for block in blocks:
-            print("EXTRACTING LINES")
-            lines = block["lines"]
-            for line in lines:
-                spans = line["spans"]
-                for span in spans:
-                    print(span["text"])
-                    words.append(Word.from_dict({"text": span["text"], "bbox": span["bbox"]}))
+        for word in page_words:
+            words.append(Word(text=word[4], bbox=BBox(x0=word[0], y0=word[1], x1=word[2], y1=word[3])))
+
+        pages.append(Page.from_words(words))
+
+    document = Document(pages=pages)
+
+    print(document)
+
 
 
 if __name__ == "__main__":
