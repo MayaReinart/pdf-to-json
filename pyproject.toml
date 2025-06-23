@@ -11,6 +11,8 @@ python = "^3.10"
 pymupdf = "^1.26.1"
 pytesseract = "^0.3.13"
 pydantic = "^2.11.7"
+scikit-learn = "^1.7.0"
+matplotlib = "^3.10.3"
 
 
 [build-system]
